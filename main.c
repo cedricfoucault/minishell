@@ -170,56 +170,60 @@ void execute (struct cmd *cmd)
                 fprintf(stderr,"error: %s\n", strerror(errno));
                 exit(-1);
             }
+            // if (fork()) {
+            //                  // father - wait for child to terminate
+            //                 if (wait(NULL) == -1) 
+            //                 {
+            //                     fprintf(stderr,"error: %s\n", strerror(errno));   
+            //                     exit(-1);
+            //                 }
+            //             } else {
             if (fork()) {
-                 // father - wait for child to terminate
-                if (wait(NULL) == -1) 
-                {
-                    fprintf(stderr,"error: %s\n", strerror(errno));   
-                    exit(-1);
-                }
-            } else {
-                if (fork()) {
                     // first child - handles the left command of the pipe
                     // replace stdout with the output part of the pipe
-                    if (dup2(filepipe[1], 1) == -1) {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
+                if (close(filepipe[0]) == -1) {
+                    fprintf(stderr,"error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+
+                if (dup2(filepipe[1], 1) == -1) {
+                    fprintf(stderr,"error: %s\n", strerror(errno));
+                    exit(-1);
+                }
                     // close the unused file descriptors
-                    if (close(filepipe[0]) == -1) {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    if (close(filepipe[1]) == -1) {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
+
+                if (close(filepipe[1]) == -1) {
+                    fprintf(stderr,"error: %s\n", strerror(errno));
+                    exit(-1);
+                }
                     // execute the left command
-                    execute(cmd->left);
-                    close(1); // if ...
-                    close(0); // if ...
-                } else {
+                execute(cmd->left);
+                    // close(1); // if ...
+                    // close(0); // if ...
+            } else {
                     // second child - handles the right command of the pipe
                     // replace stdin with the read part of the pipe
-                    if (dup2(filepipe[0], 0) == -1) {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    // close the unused file descriptors
-                    if (close(filepipe[0]) == -1) {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    if (close(filepipe[1]) == -1) {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    // execute the left command
-                    execute(cmd->right);
-                    close(0); // if error ...
-                    close(1); // if error ...
+                if (close(filepipe[1]) == -1) {
+                    fprintf(stderr,"error: %s\n", strerror(errno));
+                    exit(-1);
                 }
+
+                if (dup2(filepipe[0], 0) == -1) {
+                    fprintf(stderr,"error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                    // close the unused file descriptors
+                if (close(filepipe[0]) == -1) {
+                    fprintf(stderr,"error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+
+                    // execute the left command
+                execute(cmd->right);
+                    // close(0); // if error ...
+                    // close(1); // if error ...
             }
+            // }
             break;
         }
 
