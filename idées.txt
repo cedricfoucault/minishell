@@ -1,5 +1,0 @@
-C_AND : si l'execution de la première commande n'a pas écrit sur stderr
-(cmd->err), exécuter le deuxième
-C_OR : idem
-
--> trouver l'utilisation de cmd->error (char* ? =/= FILE* ou filedes) ?

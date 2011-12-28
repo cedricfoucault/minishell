@@ -1,1 +1,1 @@
-output.o output.d: output.c global.h
+global.o: global.h
