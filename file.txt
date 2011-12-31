@@ -1,0 +1,16 @@
+Makefile
+file.txt
+global.h
+lex.c
+lex.l
+main.c
+main.d
+main.o
+output.c
+output.d
+output.o
+parse.c
+parse.d
+parse.o
+parse.y
+shell

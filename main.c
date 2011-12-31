@@ -5,10 +5,17 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/param.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <glob.h>
 
 #include "global.h"
+
+// MAXDIGIT_INT: the maximum number of digits of int written in base 10
+// in a 64-bit machine
+#define MAXDIGIT_INT 19 
 
 // This is the function that you should work on.
 // It takes a command parsed at the command line.
@@ -17,105 +24,146 @@
 // Currently, the procedure can only execute simple commands and simply
 // emits error messages if the user has entered something more complicated.
 //
-void execute (struct cmd *cmd)
-{
-    switch (cmd->type)
-    {
+
+// mode_t DEFAULT_FILEMODE = S_IRUSR |  S_IWUSR | S_IRGRP | S_IROTH;
+void propagate (struct cmd *cmd);
+int executeAux (struct cmd *cmd);
+
+int execute (struct cmd *cmd) {
+    propagate(cmd);
+    return executeAux(cmd);
+}
+
+int executeAux (struct cmd *cmd) {
+    int retval;
+    int in = dup(0), out = dup(1), err = dup(2);
+
+    switch (cmd->type) {
         case C_PLAIN:
-        // if (cmd->input || cmd->output || cmd->append || cmd->error)
-        // {
-        // 
-        //     fprintf(stderr,"I do not know how to redirect, "
-        //         "please help me!\n");
-        //     break;
-        // }
-        if (fork())
-        {
-            // father - wait for child to terminate
-            if (wait(NULL) == -1) 
-            {
-                fprintf(stderr,"error: %s\n", strerror(errno));   
-                exit(-1);
+        // builtin "cd" command (change directory)
+        if (strcmp(cmd->args[0], "cd") == 0) {
+            // builtin "cd" (change directory)
+            char cwd[MAXPATHLEN + 1];
+
+            if (chdir(cmd->args[1]) == -1) {
+                fprintf(stderr, "error: %s\n", strerror(errno));
+                retval = -1;
+                break;
             }
+
+            if (getcwd(cwd, MAXPATHLEN) == NULL) {
+                fprintf(stderr, "error: %s\n", strerror(errno));
+                retval = -1;
+                break;
+            }
+
+            if (setenv("PWD", cwd, 1)) {
+                fprintf(stderr, "error: %s\n", strerror(errno));
+                fprintf(stderr, "cannot create $?\n");
+                retval = -1;
+                break;
+            }
+
+            retval = 0; 
+            break;
         }
-        else
-        {	// child - execute the command
+
+        // external program
+        if (fork()) {
+            // father - wait for child to terminate
+            int statval;
+
+            if (wait(&statval) == -1) 
+            {
+                fprintf(stderr, "error: %s\n", strerror(errno));   
+                retval = -1;
+                break;
+            }
+
+            if (WIFEXITED(statval)) {
+                // return the child's exit value
+                retval = WEXITSTATUS(statval);
+                break;
+            } else {
+                fprintf(stderr, "error: child process did not terminate with exit \n");
+                retval = -1;
+                break;
+            }
+        } else {	
+            // child - execute the command
 
             // handle the redirections
-            if (cmd->input) 
-            {
+
+            // get the current umask value
+            mode_t mask = umask(0);
+            umask (mask);
+            // compute the actual file permission mode
+            mode_t filemode = (0666) ^ mask;
+
+            if (cmd->input) {
                 int input = open(cmd->input, O_RDONLY);
 
-                if (input != -1) 
-                {
-                    if (dup2(input, 0) == -1)
-                    {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    close(input);
-                } 
-                else 
-                {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
+                if (input == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                if (dup2(input, 0) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                if (close(input) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
                     exit(-1);
                 }
             }
 
-            if (cmd->output) 
-            {
-                int output = open(cmd->output, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR |  S_IWUSR | S_IRGRP | S_IROTH);
+            if (cmd->output) {
+                int output = open(cmd->output, O_WRONLY | O_TRUNC | O_CREAT, filemode);
 
-                if (output != -1) 
-                {
-                    if (dup2(output, 1) == -1)
-                    {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    close(output);
-                } 
-                else 
-                {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
+                if (output == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                if (dup2(output, 1) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                if (close(output) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
                     exit(-1);
                 }
             }
 
-            if (cmd->append) 
-            {
-                int append = open(cmd->append, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR |  S_IWUSR | S_IRGRP | S_IROTH);
+            if (cmd->append) {
+                int append = open(cmd->append, O_WRONLY | O_APPEND | O_CREAT, filemode);
 
-                if (append != -1) 
-                {
-                    if (dup2(append, 1) == -1)
-                    {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    close(append);
-                }
-                else 
-                {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
+                if (append == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
                     exit(-1);
                 }
+                if (dup2(append, 1) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1); 
+                }
+                if (close(append) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }       
             }
 
             if (cmd->error) {
-                int error = open(cmd->error, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR |  S_IWUSR | S_IRGRP | S_IROTH);
+                int error = open(cmd->error, O_WRONLY | O_TRUNC | O_CREAT, filemode);
 
-                if (error != -1) {
-                    if (dup2(error, 2) == -1) 
-                    {
-                        fprintf(stderr,"error: %s\n", strerror(errno));
-                        exit(-1);
-                    }
-                    close(error);
-                } 
-                else 
-                {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
+                if (error == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                if (dup2(error, 2) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                if (close(error) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
                     exit(-1);
                 }
             }
@@ -124,115 +172,185 @@ void execute (struct cmd *cmd)
             execvp(cmd->args[0],cmd->args);
 
             // if we get to this line, the command has failed
-            fprintf(stderr,"error: %s\n", strerror(errno));
+            fprintf(stderr, "error: %s\n", strerror(errno));
             exit(-1);
         }
-        break;
+
         case C_VOID:
-        // if (cmd->input || cmd->output || cmd->append || cmd->error)
-        // {
-        //     fprintf(stderr,"I do not know how to redirect, "
-        //         "please help me!\n");
-        //     break;
-        // }
-        // 
-        // if (fork())
-        // {
-        //     // father - wait for child to terminate
-        //     wait(NULL);
-        // }
-        // else
-        // {    // child - execute the command
-        //     execute(cmd->left);
-        //     // if we get to this line, the command has failed
-        //     fprintf(stderr,"error: %s\n", strerror(errno));
-        //     exit(-1);
-        // }
-        case C_AND:
-        // execute(cmd->left);
-        // if (!error) {
-        //     execute(cmd->right);
-        // }
+        retval = executeAux(cmd->left);
         break;
 
-        case C_OR:
-        // execute(cmd->left);
-        // if (error) {
-        //     execute(cmd->right);
-        // }
-        break;
+        case C_AND: {
+            int error;  
 
-        case C_PIPE:
-        {
-            int filepipe[2];
-
-            if (pipe(filepipe) == -1) {
-                fprintf(stderr,"error: %s\n", strerror(errno));
-                exit(-1);
-            }
-            // if (fork()) {
-            //                  // father - wait for child to terminate
-            //                 if (wait(NULL) == -1) 
-            //                 {
-            //                     fprintf(stderr,"error: %s\n", strerror(errno));   
-            //                     exit(-1);
-            //                 }
-            //             } else {
-            if (fork()) {
-                    // first child - handles the left command of the pipe
-                    // replace stdout with the output part of the pipe
-                if (close(filepipe[0]) == -1) {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
-                    exit(-1);
-                }
-
-                if (dup2(filepipe[1], 1) == -1) {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
-                    exit(-1);
-                }
-                    // close the unused file descriptors
-
-                if (close(filepipe[1]) == -1) {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
-                    exit(-1);
-                }
-                    // execute the left command
-                execute(cmd->left);
-                    // close(1); // if ...
-                    // close(0); // if ...
+            error = executeAux(cmd->left);
+            if (!error) {
+                retval = executeAux(cmd->right);
             } else {
-                    // second child - handles the right command of the pipe
-                    // replace stdin with the read part of the pipe
-                if (close(filepipe[1]) == -1) {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
-                    exit(-1);
-                }
-
-                if (dup2(filepipe[0], 0) == -1) {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
-                    exit(-1);
-                }
-                    // close the unused file descriptors
-                if (close(filepipe[0]) == -1) {
-                    fprintf(stderr,"error: %s\n", strerror(errno));
-                    exit(-1);
-                }
-
-                    // execute the left command
-                execute(cmd->right);
-                    // close(0); // if error ...
-                    // close(1); // if error ...
+                retval = error;
             }
-            // }
             break;
         }
 
+        case C_OR: {
+            int error;  
+
+            error = executeAux(cmd->left);
+            if (error) {
+                retval = executeAux(cmd->right);
+            } else {
+                retval = error;
+            }
+            break;
+        }
+
+        case C_PIPE: {
+            int filepipe[2];
+
+            if (pipe(filepipe) == -1) {
+                fprintf(stderr, "error: %s\n", strerror(errno));
+                exit(-1);
+            }
+            if (fork()) {
+                // parent - handles the right command of the pipe
+                int statval;
+
+                // close the unused part of the pipe
+                if (close(filepipe[1]) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    retval = -1; 
+                    break;
+                }
+                // replace stdin with the read part of the pipe
+                if (dup2(filepipe[0], 0) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    retval = -1; 
+                    break;
+                }
+                // close the unused copy
+                if (close(filepipe[0]) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    retval = -1; 
+                    break;
+                }
+                // execute the right command
+                retval = executeAux(cmd->right);
+                // wait for child to terminate
+                if (wait(&statval) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));   
+                    retval = -1;
+                    break;
+                }
+                if (WIFEXITED(statval)) {
+                    // return the child's exit value
+                    retval = retval || WEXITSTATUS(statval);
+                    break;
+                } else {
+                    fprintf(stderr, "error: child process did not terminate with exit \n");
+                    retval = -1;
+                    break;
+                }
+            } else {
+                // child - handles the left command of the pipe
+
+                // close the unused part of the pipe
+                if (close(filepipe[0]) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                // replace stdout with the output part of the pipe
+                if (dup2(filepipe[1], 1) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                // close the unused copy
+                if (close(filepipe[1]) == -1) {
+                    fprintf(stderr, "error: %s\n", strerror(errno));
+                    exit(-1);
+                }
+                // execute the left command
+                exit(executeAux(cmd->left));
+            }
+        }
+
         case C_SEQ:
-        execute(cmd->left);
-        execute(cmd->right);
-        // fprintf(stderr,"I do not know how to do this, "
-        //     "please help me!\n");
+        executeAux(cmd->left);
+        retval = executeAux(cmd->right);
         break;
+    }
+
+    dup2(in, 0);
+    close(in);
+    dup2(out, 1);
+    close(out);
+    dup2(err, 2);
+    close(err);
+    return retval;
+}
+
+void propagate (struct cmd *cmd) {
+    switch (cmd->type) {
+        // the command has no subcommand
+        case C_PLAIN:
+        return;
+
+        // handle the pipes properly: don't interfer with the pipe's in/out
+        case C_PIPE:
+        if (cmd->output && !(cmd->right)->output) {
+            (cmd->right)->output = cmd->output;
+        }
+        if (cmd->append && !(cmd->right)->append) {
+            (cmd->right)->append = cmd->append;
+        }
+        if (cmd->error && !(cmd->right)->error) {
+            (cmd->right)->error = cmd->error;
+        }
+        propagate(cmd->right);
+
+        if (cmd->input && !(cmd->left)->input) {
+            (cmd->left)->input = cmd->input;
+        }
+        if (cmd->error && !(cmd->left)->error) {
+            (cmd->left)->error = cmd->error;
+        }
+        propagate(cmd->left);
+
+        break;
+
+
+        // the command has a right subcommand
+        case C_AND:
+        case C_OR:
+        case C_SEQ:
+        if (cmd->input && !(cmd->right)->input) {
+            (cmd->right)->input = cmd->input;
+        }
+        if (cmd->output && !(cmd->right)->output) {
+            (cmd->right)->output = cmd->output;
+        }
+        if (cmd->append && !(cmd->right)->append) {
+            (cmd->right)->append = cmd->append;
+        }
+        if (cmd->error && !(cmd->right)->error) {
+            (cmd->right)->error = cmd->error;
+        }
+        propagate(cmd->right);
+
+        // the command has a left subcommand
+        default:
+        if (cmd->input && !(cmd->left)->input) {
+            (cmd->left)->input = cmd->input;
+        }
+        if (cmd->output && !(cmd->left)->output) {
+            (cmd->left)->output = cmd->output;
+        }
+        if (cmd->append && !(cmd->left)->append) {
+            (cmd->left)->append = cmd->append;
+        }
+        if (cmd->error && !(cmd->left)->error) {
+            (cmd->left)->error = cmd->error;
+        }
+        propagate(cmd->left);
     }
 }
 
@@ -240,8 +358,35 @@ int main (int argc, char **argv)
 {
     printf("welcome to lsvsh!\n");
 
+    // Initialize environment variables
+
+    // PWD variable to store the present working directory
+    char cwd[MAXPATHLEN + 1];
+
+    if (getcwd(cwd, MAXPATHLEN) == NULL) {
+        fprintf(stderr, "error: %s\n", strerror(errno));
+        fprintf(stderr, "cannot get current working directory\n");
+        exit (-1);
+    }
+    if (setenv("PWD", cwd, 1)) {
+        fprintf(stderr, "error: %s\n", strerror(errno));
+        fprintf(stderr, "cannot create $?\n");
+        exit (-1);
+    }
+
+    // ? variable to store the last command's exit value
+    if (setenv("?", "0", 1)) {
+        fprintf(stderr, "error: %s\n", strerror(errno));
+        fprintf(stderr, "cannot create $?\n");
+        exit (-1);
+    }
+
+
     while (1)
     {
+        int exitval;
+        char exitstr[MAXDIGIT_INT];
+
         char *line = readline ("shell> ");
         if (!line) break;	// user pressed CTRL+D; quit shell
         if (!*line) continue;	// empty line
@@ -252,7 +397,20 @@ int main (int argc, char **argv)
         if (!cmd) continue;	// some parse error occurred; ignore
         // LINE TO SWITCH BETWEEN DISPLAYING OUTPUT AND EXECUtE
         // output(cmd,0);      // activate this for debugging
-        execute(cmd);
+        exitval = execute(cmd);
+        // maintain the ? variable
+        sprintf(exitstr, "%d", exitval);
+        if (setenv("?", exitstr, 1)) {
+            fprintf(stderr, "error: %s\n", strerror(errno));
+            fprintf(stderr, "cannot update $?\n");
+            exit (-1);
+        }
+        // printf("? value: %s\n", getenv("?"));
+        //         printf("PWD value: %s\n", getenv("PWD"));
+        // fprintf(fout, "execute termine\n");
+        // fflush(fout);
+        // printf("je suis la\n");
+        // fflush(stdout);
     }
 
     printf("goodbye!\n");
