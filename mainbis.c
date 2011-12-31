@@ -67,6 +67,11 @@ int main (int argc, char **argv) {
 
         struct cmd *cmd = parser(line);
         if (!cmd) continue;	// some parse error occurred; ignore
+        // LINE TO SWITCH BETWEEN DISPLAYING OUTPUT AND EXECUtE
+        // output(cmd,0);      // activate this for debugging
+        
+        // args = globArgs(cmd->args);
+        // cmd->args = args;
         
         exitval = execute(cmd);
         if (exitval == SIGINT) {
@@ -452,3 +457,49 @@ void propagate (struct cmd *cmd) {
         propagate(cmd->left);
     }
 }
+
+// char **globArgs(char **args) {
+//     int i, j, nargs, newNargs;
+//     char **newArgs;
+//     glob_t **pglob;
+//     
+//     nargs = 0;
+//     i = 1;
+//     while (args[i] != NULL) {
+//         nargs++;
+//     }
+//     
+//     pglob = (glob_t **) malloc(nargs * sizeof(glob_t *));
+//     for (i = 1; i <= nargs; i++) {
+//         glob(args[i], GLOB_NOCHECK | GLOB_TILDE, NULL, pglob[i-1]);    
+//     }
+// 
+//     newNargs = 0;
+//     for (i = 0; i < nargs; i++) {
+//         newNargs += pglob[i]->gl_matchc;
+//     }
+//     
+//     newArgs = (char **) malloc((newNargs + 2) * sizeof(char *));
+//     newArgs[0] = args[0];
+//     newArgs[newNargs + 1] = NULL;
+//     
+//     i = 1;
+//     while (i <= newNargs) {
+//         j = 0;
+//         while ((pglob[i - 1]->gl_pathv)[j] != NULL) {
+//             newArgs[i + j] = (char *) malloc(strlen((pglob[i - 1]->gl_pathv)[j] + 1) * sizeof(char));
+//             strcpy(newArgs[i + j], (pglob[i - 1]->gl_pathv)[j]);
+//             j++;
+//             printf("%s\n", newArgs[i + j]);
+//         }
+//         i += j;
+//     }
+//     
+//     // free the glob_t structures
+//     for(i = 0; i < nargs; ++i) {
+//         globfree(pglob[i]);
+//     }
+//     free(pglob);
+//     
+//     return newArgs;
+// }
