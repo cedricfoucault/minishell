@@ -57,7 +57,6 @@ int main (int argc, char **argv) {
     while (1) {
         int exitval;
         char exitstr[MAXDIGIT_INT];
-        char **args;
 
         char *line = readline ("shell> ");
         if (!line) break;	// user pressed CTRL+D; quit shell
