@@ -17,17 +17,82 @@
 // in a 64-bit machine
 #define MAXDIGIT_INT 19 
 
-// This is the function that you should work on.
-// It takes a command parsed at the command line.
-// The structure of the command is explained in output.c.
-//
-// Currently, the procedure can only execute simple commands and simply
-// emits error messages if the user has entered something more complicated.
-//
-
-// mode_t DEFAULT_FILEMODE = S_IRUSR |  S_IWUSR | S_IRGRP | S_IROTH;
-void propagate (struct cmd *cmd);
+int execute (struct cmd *cmd);
 int executeAux (struct cmd *cmd);
+void propagate (struct cmd *cmd);
+
+int main (int argc, char **argv) {
+    printf("welcome to lsvsh!\n");
+
+    // Initialize environment variables
+
+    // PWD variable to store the present working directory
+    char cwd[MAXPATHLEN + 1];
+
+    if (getcwd(cwd, MAXPATHLEN) == NULL) {
+        fprintf(stderr, "error: %s\n", strerror(errno));
+        fprintf(stderr, "cannot get current working directory\n");
+        exit (-1);
+    }
+    if (setenv("PWD", cwd, 1)) {
+        fprintf(stderr, "error: %s\n", strerror(errno));
+        fprintf(stderr, "cannot create $?\n");
+        exit (-1);
+    }
+
+    // ? variable to store the last command's exit value
+    if (setenv("?", "0", 1)) {
+        fprintf(stderr, "error: %s\n", strerror(errno));
+        fprintf(stderr, "cannot create $?\n");
+        exit (-1);
+    }
+    
+    // Ignore SIGINT (CTRL-C)
+    if (signal(SIGINT, SIG_IGN) == SIG_ERR) {
+        fprintf(stderr, "error: %s\n", strerror(errno));
+        exit(-1);
+    }
+
+
+    while (1) {
+        int exitval;
+        char exitstr[MAXDIGIT_INT];
+    
+        char *line = readline ("shell> ");
+        if (!line) break;	// user pressed CTRL+D; quit shell
+        if (!*line) continue;	// empty line
+
+        add_history (line);	// add line to history
+
+        struct cmd *cmd = parser(line);
+        if (!cmd) continue;	// some parse error occurred; ignore
+        // LINE TO SWITCH BETWEEN DISPLAYING OUTPUT AND EXECUtE
+        // output(cmd,0);      // activate this for debugging
+
+        exitval = execute(cmd);
+        if (exitval == SIGINT) {
+            // print a newline if the program terminated with SIGINT
+            printf("\n");
+        }
+        
+        // maintain the ? variable
+        sprintf(exitstr, "%d", exitval);
+        if (setenv("?", exitstr, 1)) {
+            fprintf(stderr, "error: %s\n", strerror(errno));
+            fprintf(stderr, "cannot update $?\n");
+            exit (-1);
+        }
+        // printf("? value: %s\n", getenv("?"));
+        //         printf("PWD value: %s\n", getenv("PWD"));
+        // fprintf(fout, "execute termine\n");
+        // fflush(fout);
+        // printf("je suis la\n");
+        // fflush(stdout);
+    }
+
+    printf("goodbye!\n");
+    return 0;
+}
 
 int execute (struct cmd *cmd) {
     propagate(cmd);
@@ -80,25 +145,36 @@ int executeAux (struct cmd *cmd) {
                 break;
             }
 
-            if (WIFEXITED(statval)) {
+            if (WIFEXITED(statval)) { // termination by call to exit
                 // return the child's exit value
                 retval = WEXITSTATUS(statval);
                 break;
+            } else if (WIFSIGNALED(statval)) { // termination by signal
+                // return the signal's value
+                retval = WTERMSIG(statval);
+                break;
             } else {
-                fprintf(stderr, "error: child process did not terminate with exit \n");
+                fprintf(stderr, "error: child process did not terminate with exit or due to the receipt of a signal\n");
                 retval = -1;
                 break;
             }
         } else {	
             // child - execute the command
+            mode_t mask, filemode;
+            
+            // restore SIGINT's default action
+            if (signal(SIGINT, SIG_DFL) == SIG_ERR) {
+                fprintf(stderr, "error: %s\n", strerror(errno));
+                exit(-1);
+            }
 
             // handle the redirections
 
             // get the current umask value
-            mode_t mask = umask(0);
+            mask = umask(0);
             umask (mask);
             // compute the actual file permission mode
-            mode_t filemode = (0666) ^ mask;
+            filemode = (0666) ^ mask;
 
             if (cmd->input) {
                 int input = open(cmd->input, O_RDONLY);
@@ -118,7 +194,7 @@ int executeAux (struct cmd *cmd) {
             }
 
             if (cmd->output) {
-                int output = open(cmd->output, O_WRONLY | O_TRUNC | O_CREAT, filemode);
+                int output = open(cmd->output, O_WRONLY| O_TRUNC | O_CREAT, filemode);
 
                 if (output == -1) {
                     fprintf(stderr, "error: %s\n", strerror(errno));
@@ -352,67 +428,4 @@ void propagate (struct cmd *cmd) {
         }
         propagate(cmd->left);
     }
-}
-
-int main (int argc, char **argv)
-{
-    printf("welcome to lsvsh!\n");
-
-    // Initialize environment variables
-
-    // PWD variable to store the present working directory
-    char cwd[MAXPATHLEN + 1];
-
-    if (getcwd(cwd, MAXPATHLEN) == NULL) {
-        fprintf(stderr, "error: %s\n", strerror(errno));
-        fprintf(stderr, "cannot get current working directory\n");
-        exit (-1);
-    }
-    if (setenv("PWD", cwd, 1)) {
-        fprintf(stderr, "error: %s\n", strerror(errno));
-        fprintf(stderr, "cannot create $?\n");
-        exit (-1);
-    }
-
-    // ? variable to store the last command's exit value
-    if (setenv("?", "0", 1)) {
-        fprintf(stderr, "error: %s\n", strerror(errno));
-        fprintf(stderr, "cannot create $?\n");
-        exit (-1);
-    }
-
-
-    while (1)
-    {
-        int exitval;
-        char exitstr[MAXDIGIT_INT];
-
-        char *line = readline ("shell> ");
-        if (!line) break;	// user pressed CTRL+D; quit shell
-        if (!*line) continue;	// empty line
-
-        add_history (line);	// add line to history
-
-        struct cmd *cmd = parser(line);
-        if (!cmd) continue;	// some parse error occurred; ignore
-        // LINE TO SWITCH BETWEEN DISPLAYING OUTPUT AND EXECUtE
-        // output(cmd,0);      // activate this for debugging
-        exitval = execute(cmd);
-        // maintain the ? variable
-        sprintf(exitstr, "%d", exitval);
-        if (setenv("?", exitstr, 1)) {
-            fprintf(stderr, "error: %s\n", strerror(errno));
-            fprintf(stderr, "cannot update $?\n");
-            exit (-1);
-        }
-        // printf("? value: %s\n", getenv("?"));
-        //         printf("PWD value: %s\n", getenv("PWD"));
-        // fprintf(fout, "execute termine\n");
-        // fflush(fout);
-        // printf("je suis la\n");
-        // fflush(stdout);
-    }
-
-    printf("goodbye!\n");
-    return 0;
 }
